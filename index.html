@@ -238,6 +238,9 @@
   <label>Background colour (used for MP4)</label>
   <input id="bg" type="color" value="#111318">
   <label class="check"><input id="transp" type="checkbox" checked> Transparent background (alpha)</label>
+  <div class="row"><button id="bgImgBtn" type="button">Upload background image…</button><button id="bgImgClear" type="button" class="hide">Remove</button></div>
+  <input id="bgImgFile" type="file" accept="image/*" hidden>
+  <label class="check hide" id="bgImgRow"><input id="bgImgOn" type="checkbox" checked> Use background image (covers the export size)</label>
 
   <label>Export size</label>
   <select id="exp">
@@ -344,6 +347,7 @@ function resize(){
   renderer.setSize(w, h, false);
   camera.aspect = aspect;
   camera.updateProjectionMatrix();
+  if(typeof applyBg==='function') applyBg();
 }
 addEventListener('resize', resize);
 
@@ -365,6 +369,7 @@ function setExportSize(){
   renderer.setPixelRatio(1);
   renderer.setSize(w, h, false);
   camera.aspect = w/h; camera.updateProjectionMatrix();
+  if(typeof applyBg==='function') applyBg();
 }
 function restoreSize(){ exporting = false; resize(); }
 
@@ -643,9 +648,20 @@ function buildBlocks(resample=true){
   applyBg();
 }
 
+// background image: cover-fitted to the current canvas / export size
+let bgTex = null;
+function bgImageOn(){ return !!bgTex && $('bgImgOn').checked; }
+function fitBgImage(){
+  if(!bgTex) return;
+  const im = bgTex.image, ia = im.width/im.height, ca = canvas.width/canvas.height || 1;
+  if(ca > ia){ bgTex.repeat.set(1, ia/ca); bgTex.offset.set(0, (1-ia/ca)/2); }
+  else { bgTex.repeat.set(ca/ia, 1); bgTex.offset.set((1-ca/ia)/2, 0); }
+}
+function solidBg(){ return bgImageOn() ? (fitBgImage(), bgTex) : new THREE.Color($('bg').value); }
 function applyBg(){
-  const t = $('transp').checked;
-  scene.background = t ? null : new THREE.Color($('bg').value);
+  const t = $('transp').checked && !bgImageOn();
+  scene.background = bgImageOn() ? (fitBgImage(), bgTex) : t ? null : new THREE.Color($('bg').value);
+  $('bgImgRow').classList.toggle('hide', !bgTex); $('bgImgClear').classList.toggle('hide', !bgTex);
   canvas.style.background = t
     ? 'repeating-conic-gradient(#2a2e38 0 25%, #1c1f27 0 50%) 0 0/24px 24px' : '';
 }
@@ -803,7 +819,7 @@ updLabels();
  'trDetail','trColors','trNoise','trSmooth','trBlur','trmbg','depthE','bevel','finish','sideMode','sideColor','sideShade','envInt','style'
 ].forEach(id=>$(id).addEventListener('input', ()=>{updLabels(); rebuild(false);}));
 $('reflColor').addEventListener('input', updateEnvironment);
-['bg','transp'].forEach(id=>$(id).addEventListener('input', applyBg));
+['bg','transp','bgImgOn'].forEach(id=>$(id).addEventListener('input', applyBg));
 ['posX','posY','logoSize','enDur','enDelay','enStr','exDur','exStr','finalAngle','startAngle','dshade','speed','hold','angle','motion'].forEach(id=>$(id).addEventListener('input', updLabels));
 // ---------- every control is a setting: auto-saved, restorable, shareable as a preset ----------
 const SET_KEY = 'anamorphic.settings';
@@ -830,7 +846,8 @@ document.querySelector('aside').addEventListener('change', saveSettings);
 function refreshAll(){ resize(); rebuild(true); startT = performance.now(); }
 $('presetReset').onclick = ()=>{
   applySettings(DEFAULTS); saveSettings();
-  try{ localStorage.removeItem(LOGO_KEY); }catch(e){}
+  try{ localStorage.removeItem(LOGO_KEY); localStorage.removeItem(BG_KEY); }catch(e){}
+  setBgImage(null);
   imgToken++; svgText = DEFAULT_SVG; img = defaultLogo();   // back to the built-in logo
   refreshAll();
 };
@@ -852,6 +869,35 @@ $('motion').addEventListener('change', ()=>startT=performance.now());
 $('restart').onclick = ()=>startT=performance.now();
 
 // ---- the uploaded logo is remembered as well (SVG text or PNG data URL) ----
+const BG_KEY = 'anamorphic.bgimage';
+function setBgImage(dataUrl, then){
+  if(!dataUrl){ if(bgTex) bgTex.dispose(); bgTex = null; applyBg(); return; }
+  const im = new Image();
+  im.onload = ()=>{
+    if(bgTex) bgTex.dispose();
+    bgTex = new THREE.Texture(im); bgTex.encoding = THREE.sRGBEncoding;
+    bgTex.minFilter = THREE.LinearFilter; bgTex.generateMipmaps = false; bgTex.needsUpdate = true;
+    applyBg(); then && then();
+  };
+  im.src = dataUrl;
+}
+$('bgImgBtn').onclick = ()=>$('bgImgFile').click();
+$('bgImgClear').onclick = ()=>{ try{ localStorage.removeItem(BG_KEY); }catch(e){}; setBgImage(null); };
+$('bgImgFile').onchange = e => {
+  const f = e.target.files[0]; e.target.value = ''; if(!f) return;
+  const url = URL.createObjectURL(f), im = new Image();
+  im.onload = ()=>{   // downscale huge photos (max 4096 px) and keep a JPEG copy small enough for localStorage
+    const k = Math.min(1, 4096/Math.max(im.width, im.height)), c = document.createElement('canvas');
+    c.width = Math.round(im.width*k); c.height = Math.round(im.height*k);
+    c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+    const data = c.toDataURL('image/jpeg', 0.9);
+    $('bgImgOn').checked = true;
+    setBgImage(data, ()=>{ saveSettings(); try{ localStorage.setItem(BG_KEY, data); $('notice').style.display='none'; }catch(err){ $('notice').textContent = 'Background image is too large to remember after reload (it still works now).'; $('notice').style.display='block'; } });
+    URL.revokeObjectURL(url);
+  };
+  im.onerror = ()=>alert('Could not read that image.');
+  im.src = url;
+};
 const LOGO_KEY = 'anamorphic.logo';
 function saveLogo(rec){
   try{ localStorage.setItem(LOGO_KEY, JSON.stringify(rec)); $('notice').style.display = 'none'; }
@@ -926,13 +972,13 @@ async function exportVideo(kind){   // kind: 'mov' (alpha ProRes 4444) | 'mp4' (
     const ping = await fetch(API + '/api/ping').then(r=>r.json()).catch(()=>null);
     if(!ping){ st.textContent = 'Helper not running. In the project folder run: node server.js  — then open http://localhost:8787'; return; }
     if(!ping.ffmpeg){ st.textContent = 'ffmpeg not found on this computer (brew install ffmpeg).'; return; }
-    if(kind === 'mov' && !$('transp').checked) st.textContent = 'Note: transparent background is off, so the MOV will have a solid background.';
+    if(kind === 'mov' && (!$('transp').checked || bgImageOn())) st.textContent = 'Note: transparent background is off, so the MOV will have a solid background.';
     else st.textContent = '';
 
     const fps = +$('fps').value, per = +$('vlen').value, N = Math.round(per*fps);
     const job = Date.now().toString(36);
     btn.disabled = true; capturing = true;
-    if(kind === 'mp4') scene.background = new THREE.Color($('bg').value);   // MP4 has no alpha: bake in the background colour (r128 writes scene.background straight to the output, so no sRGB conversion)
+    if(kind === 'mp4') scene.background = solidBg();   // MP4 has no alpha: bake in the background colour (r128 writes scene.background straight to the output, so no sRGB conversion)
     setExportSize();
     for(let i=0;i<N;i++){
       updateScene(i/fps);                                  // exact timestep: no dropped frames, perfectly smooth
@@ -965,6 +1011,7 @@ if(location.hash==='#movtest'){   // test hook: short, small export, click the b
 img = defaultLogo();
 loadSettings();
 loadSavedLogo();
+try{ const b = localStorage.getItem(BG_KEY); if(b) setBgImage(b); }catch(e){}
 { const m = location.hash.match(/^#a(-?\d+)$/); if(location.hash==='#flat') $('motion').value='manual'; if(m){ $('motion').value='manual'; $('angle').value=m[1]; } }   // test hook: lock to the flat front view
 updateEnvironment();
 resize(); rebuild(true);
