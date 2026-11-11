@@ -1,0 +1,17 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      PORT: "8787"
+      # Set these in Dokploy -> Environment. If either is empty the app has no login.
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-}
+      BASIC_AUTH_PASS: ${BASIC_AUTH_PASS:-}
+    expose:
+      - "8787"
+    networks:
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true
