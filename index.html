@@ -192,7 +192,7 @@
   <input id="angle" type="range" min="-180" max="180" step="1" value="0">
 
   <hr>
-  <label>Background</label>
+  <label>Background colour (used for MP4)</label>
   <input id="bg" type="color" value="#111318">
   <label class="check"><input id="transp" type="checkbox" checked> Transparent background (alpha)</label>
 
@@ -211,9 +211,10 @@
     <input id="ch" type="number" min="64" max="8192" step="2" value="1080" placeholder="Height">
   </div>
 
-  <label>Frame rate (alpha MOV)</label>
+  <label>Frame rate</label>
   <select id="fps"><option value="30" selected>30 fps</option><option value="24">24 fps</option><option value="60">60 fps</option></select>
   <button id="mov" class="primary" style="margin-top:10px">Download alpha MOV (ProRes 4444)</button>
+  <button id="mp4" class="primary" style="margin-top:8px">Download MP4 (H.264, uses background colour)</button>
   <div id="movStatus" class="sub" style="margin:6px 0 0"></div>
 
   <div class="row" style="margin-top:12px">
@@ -560,8 +561,7 @@ function buildBlocks(resample=true){
 
 function applyBg(){
   const t = $('transp').checked;
-  $('bg').disabled = t;
-  scene.background = t ? null : new THREE.Color($('bg').value).convertSRGBToLinear();
+  scene.background = t ? null : new THREE.Color($('bg').value);
   canvas.style.background = t
     ? 'repeating-conic-gradient(#2a2e38 0 25%, #1c1f27 0 50%) 0 0/24px 24px' : '';
 }
@@ -754,18 +754,20 @@ $('rec').onclick = ()=>{
 // ---------- alpha MOV (frame-exact render -> local ffmpeg helper) ----------
 // Same origin when served by server.js (http locally, https on Dokploy); fall back to localhost if the file was opened directly.
 const API = /^https?:$/.test(location.protocol) ? '' : 'http://localhost:8787';
-$('mov').onclick = async ()=>{
-  const btn = $('mov'), st = $('movStatus'), label = btn.textContent;
+async function exportVideo(kind){   // kind: 'mov' (alpha ProRes 4444) | 'mp4' (H.264, opaque)
+  const btn = $(kind), st = $('movStatus'), label = btn.textContent;
   if($('motion').value === 'manual'){ alert('Pick a moving motion (Loop, Reveal, Spin or Swing) first.'); return; }
   try{
     const ping = await fetch(API + '/api/ping').then(r=>r.json()).catch(()=>null);
     if(!ping){ st.textContent = 'Helper not running. In the project folder run: node server.js  — then open http://localhost:8787'; return; }
     if(!ping.ffmpeg){ st.textContent = 'ffmpeg not found on this computer (brew install ffmpeg).'; return; }
-    if(!$('transp').checked) st.textContent = 'Note: transparent background is off, so the MOV will have a solid background.';
+    if(kind === 'mov' && !$('transp').checked) st.textContent = 'Note: transparent background is off, so the MOV will have a solid background.';
+    else st.textContent = '';
 
     const fps = +$('fps').value, per = +$('speed').value, N = Math.round(per*fps);
     const job = Date.now().toString(36);
     btn.disabled = true; capturing = true;
+    if(kind === 'mp4') scene.background = new THREE.Color($('bg').value);   // MP4 has no alpha: bake in the background colour (r128 writes scene.background straight to the output, so no sRGB conversion)
     setExportSize();
     for(let i=0;i<N;i++){
       updateScene(i/fps);                                  // exact timestep: no dropped frames, perfectly smooth
@@ -774,22 +776,24 @@ $('mov').onclick = async ()=>{
       if(!res.ok) throw new Error('frame upload failed');
       btn.textContent = `Rendering ${i+1}/${N}`;
     }
-    btn.textContent = 'Encoding ProRes 4444…';
-    const res = await fetch(`${API}/api/encode?job=${job}&fps=${fps}`, {method:'POST'});
+    btn.textContent = kind === 'mp4' ? 'Encoding MP4…' : 'Encoding ProRes 4444…';
+    const res = await fetch(`${API}/api/encode?job=${job}&fps=${fps}&format=${kind}`, {method:'POST'});
     if(!res.ok) throw new Error(await res.text());
     const url = URL.createObjectURL(await res.blob());
-    const a = document.createElement('a'); a.href = url; a.download = 'anamorphic-logo-alpha.mov'; a.click();
+    const a = document.createElement('a'); a.href = url; a.download = kind === 'mp4' ? 'anamorphic-logo.mp4' : 'anamorphic-logo-alpha.mov'; a.click();
     const d = exportDims();
     st.textContent = `Done — ${N} frames, ${fps} fps, ${d ? d.join('×') : 'preview size'}.`;
   }catch(e){
     st.textContent = 'Failed: ' + e.message;
   }finally{
-    capturing = false; restoreSize(); btn.disabled = false; btn.textContent = label; startT = performance.now();
+    capturing = false; applyBg(); restoreSize(); btn.disabled = false; btn.textContent = label; startT = performance.now();
   }
-};
+}
+$('mov').onclick = ()=>exportVideo('mov');
+$('mp4').onclick = ()=>exportVideo('mp4');
 
 if(location.hash==='#movtest'){   // test hook: short, small export, click the button automatically
-  window.addEventListener('load', ()=>setTimeout(()=>{ $('speed').value=2; $('exp').value='1280x720'; $('fps').value='24'; $('mov').click(); }, 800));
+  window.addEventListener('load', ()=>setTimeout(()=>{ $('speed').value=2; $('exp').value='1280x720'; $('fps').value='24'; $(location.search==='?mp4' ? 'mp4' : 'mov').click(); }, 800));
 }
 
 // ---------- go ----------

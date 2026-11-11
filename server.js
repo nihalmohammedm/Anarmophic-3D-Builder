@@ -86,11 +86,17 @@ http.createServer((req, res) => {
     const dir = jobDir(job);
     if (!fs.existsSync(dir)) return send(res, 400, 'no frames for this job');
     const fps = String(Math.min(120, Math.max(1, +url.searchParams.get('fps') || 30)));
-    const outFile = path.join(dir, 'out.mov');
+    const mp4 = url.searchParams.get('format') === 'mp4';
+    const outFile = path.join(dir, mp4 ? 'out.mp4' : 'out.mov');
+    const input = ['-y', '-framerate', fps, '-i', path.join(dir, '%05d.png')];
+    const codec = mp4
+      // H.264 for sharing/social: opaque (the page bakes the background colour into the frames), broad compatibility
+      ? ['-vf', 'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p', '-c:v', 'libx264', '-preset', 'slow', '-crf', '14',
+         '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-movflags', '+faststart']
+      // ProRes 4444 with alpha for editors
+      : ['-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', '-alpha_bits', '16', '-vendor', 'apl0'];
     encoding++;
-    const ff = spawn('ffmpeg', ['-y', '-framerate', fps, '-i', path.join(dir, '%05d.png'),
-      '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', '-alpha_bits', '16',
-      '-vendor', 'apl0', outFile]);
+    const ff = spawn('ffmpeg', [...input, ...codec, outFile]);
     const killer = setTimeout(() => ff.kill('SIGKILL'), 10 * 60 * 1000);
     let log = '';
     ff.stderr.on('data', d => { log = (log + d).slice(-2000); });
@@ -99,7 +105,7 @@ http.createServer((req, res) => {
       const cleanup = () => fs.rm(dir, { recursive: true, force: true }, () => {});
       if (code !== 0) { cleanup(); return send(res, 500, 'ffmpeg failed:\n' + log.slice(-800)); }
       const size = fs.statSync(outFile).size;
-      res.writeHead(200, { 'Content-Type': 'video/quicktime', 'Content-Length': size });
+      res.writeHead(200, { 'Content-Type': mp4 ? 'video/mp4' : 'video/quicktime', 'Content-Length': size });
       const rs = fs.createReadStream(outFile);
       rs.pipe(res);
       rs.on('close', () => {
