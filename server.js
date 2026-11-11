@@ -6,7 +6,6 @@
 //
 // Environment variables (all optional):
 //   PORT                 listen port                                   (default 8787)
-//   BASIC_AUTH_USER/PASS if both set, the whole app requires a login   (recommended on a public domain)
 //   MAX_FRAMES           max frames per video                          (default 1800)
 //   MAX_FRAME_MB         max size of one uploaded PNG frame            (default 40)
 //   MAX_CONCURRENT       max simultaneous encodes                      (default 2)
@@ -17,7 +16,6 @@ const PORT = +process.env.PORT || 8787;
 const MAX_FRAMES = +process.env.MAX_FRAMES || 1800;
 const MAX_FRAME_BYTES = (+process.env.MAX_FRAME_MB || 40) * 1024 * 1024;
 const MAX_CONCURRENT = +process.env.MAX_CONCURRENT || 2;
-const AUTH_USER = process.env.BASIC_AUTH_USER, AUTH_PASS = process.env.BASIC_AUTH_PASS;
 const ROOT = __dirname;
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
 const JOB_RE = /^[a-z0-9]{4,32}$/;
@@ -35,25 +33,13 @@ setInterval(() => {
   }));
 }, 5 * 60 * 1000).unref();
 
-function authorised(req) {
-  if (!AUTH_USER || !AUTH_PASS) return true;
-  const h = req.headers.authorization || '';
-  if (!h.startsWith('Basic ')) return false;
-  const [u, ...p] = Buffer.from(h.slice(6), 'base64').toString().split(':');
-  return u === AUTH_USER && p.join(':') === AUTH_PASS;
-}
 const send = (res, code, body, type = 'text/plain') => { res.writeHead(code, { 'Content-Type': type }); res.end(body); };
 
 http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
 
-  // health check for Docker / Dokploy (never behind auth)
+  // health check for Docker / Dokploy
   if (url.pathname === '/health') return send(res, 200, 'ok');
-
-  if (!authorised(req)) {
-    res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Anamorphic Logo Maker"' });
-    return res.end('Login required');
-  }
 
   // The page is served from this same origin, so no CORS is needed (and none is granted).
   if (url.pathname === '/api/ping') {
@@ -123,6 +109,6 @@ http.createServer((req, res) => {
   }
   send(res, 404, 'not found');
 }).listen(PORT, '0.0.0.0', () => {
-  console.log(`Anamorphic Logo Maker listening on :${PORT}${AUTH_USER ? ' (login required)' : ''}`);
+  console.log(`Anamorphic Logo Maker listening on :${PORT}`);
   if (!hasFfmpeg) console.log('WARNING: ffmpeg not found. Install it (brew install ffmpeg / apk add ffmpeg).');
 });
