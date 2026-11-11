@@ -1,0 +1,5 @@
+.git
+*.mov
+*.svg
+*.sh
+node_modules
