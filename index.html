@@ -784,11 +784,11 @@ canvas.addEventListener('pointermove', e=>{
     const r = canvas.getBoundingClientRect();
     $('posX').value = Math.max(-100, Math.min(100, +$('posX').value + dx/r.width*100));
     $('posY').value = Math.max(-100, Math.min(100, +$('posY').value - dy/r.height*100));
-    updLabels();
+    updLabels(); saveSettings();
   }
   drag.x = e.clientX; drag.y = e.clientY;
 });
-function resetView(){ orbit={x:0,y:0}; $('posX').value=0; $('posY').value=0; $('logoSize').value=1; updLabels(); startT=performance.now(); }
+function resetView(){ orbit={x:0,y:0}; $('posX').value=0; $('posY').value=0; $('logoSize').value=1; updLabels(); saveSettings(); startT=performance.now(); }
 canvas.addEventListener('dblclick', resetView);
 $('resetPos').onclick = resetView;
 
@@ -828,7 +828,12 @@ function loadSettings(){
 document.querySelector('aside').addEventListener('input',  saveSettings);
 document.querySelector('aside').addEventListener('change', saveSettings);
 function refreshAll(){ resize(); rebuild(true); startT = performance.now(); }
-$('presetReset').onclick = ()=>{ applySettings(DEFAULTS); saveSettings(); refreshAll(); };
+$('presetReset').onclick = ()=>{
+  applySettings(DEFAULTS); saveSettings();
+  try{ localStorage.removeItem(LOGO_KEY); }catch(e){}
+  imgToken++; svgText = DEFAULT_SVG; img = defaultLogo();   // back to the built-in logo
+  refreshAll();
+};
 $('presetSave').onclick = ()=>{
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(getSettings(), null, 2)], {type:'application/json'}));
@@ -846,14 +851,29 @@ $('motion').addEventListener('change', ()=>startT=performance.now());
 ['enType','exType','enDir','exDir'].forEach(id=>$(id).addEventListener('change', ()=>startT=performance.now()));
 $('restart').onclick = ()=>startT=performance.now();
 
+// ---- the uploaded logo is remembered as well (SVG text or PNG data URL) ----
+const LOGO_KEY = 'anamorphic.logo';
+function saveLogo(rec){
+  try{ localStorage.setItem(LOGO_KEY, JSON.stringify(rec)); $('notice').style.display = 'none'; }
+  catch(e){ $('notice').textContent = 'This logo is too large to remember in the browser — it will need re-uploading after a reload.'; $('notice').style.display = 'block'; }
+}
+function useLogo(rec, then){
+  imgToken++;
+  svgText = rec.kind === 'svg' ? rec.data : null;
+  const im = new Image();
+  im.onload = ()=>{ img = im; then && then(); rebuild(true); };
+  im.src = rec.kind === 'svg' ? URL.createObjectURL(new Blob([rec.data], {type:'image/svg+xml'})) : rec.data;
+}
+function loadSavedLogo(){
+  try{ const rec = JSON.parse(localStorage.getItem(LOGO_KEY) || 'null'); if(rec && rec.data) useLogo(rec); }catch(e){}
+}
 async function loadFile(f){
   if(!f) return;
   const isSvg = f.type === 'image/svg+xml' || /\.svg$/i.test(f.name);
-  svgText = isSvg ? await f.text() : null;
-  imgToken++;
-  const im = new Image();
-  im.onload = ()=>{ img = im; rebuild(true); };
-  im.src = URL.createObjectURL(f);
+  const data = isSvg ? await f.text() : await new Promise(r=>{ const fr = new FileReader(); fr.onload = ()=>r(fr.result); fr.readAsDataURL(f); });
+  const rec = {kind: isSvg ? 'svg' : 'png', data, name: f.name};
+  saveLogo(rec);
+  useLogo(rec);
 }
 const drop = $('drop');
 drop.onclick = ()=>$('file').click();
@@ -944,6 +964,7 @@ if(location.hash==='#movtest'){   // test hook: short, small export, click the b
 // ---------- go ----------
 img = defaultLogo();
 loadSettings();
+loadSavedLogo();
 { const m = location.hash.match(/^#a(-?\d+)$/); if(location.hash==='#flat') $('motion').value='manual'; if(m){ $('motion').value='manual'; $('angle').value=m[1]; } }   // test hook: lock to the flat front view
 updateEnvironment();
 resize(); rebuild(true);
